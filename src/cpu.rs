@@ -183,6 +183,31 @@ impl CPU {
         }
     }
 
+    fn set_reg_a(&mut self, value: u8) {
+        self.register_a = value;
+        self.update_zero_and_neg_flags(self.register_a);
+    }
+
+    fn set_reg_x(&mut self, value: u8) {
+        self.register_x = value;
+        self.update_zero_and_neg_flags(self.register_x);
+    }
+
+    fn set_reg_y(&mut self, value: u8) {
+        self.register_y = value;
+        self.update_zero_and_neg_flags(self.register_y);
+    }
+
+    fn get_byte_by_addr_mode(&mut self, mode: &AddressingMode) -> u8 {
+        let addr = self.get_operand_address(mode);
+        self.mem_read(addr)
+    }
+
+    fn get_2_bytes_by_addr_mode(&mut self, mode: &AddressingMode) -> u16 {
+        let addr = self.get_operand_address(mode);
+        self.mem_read_u16(addr)
+    }
+
     /// Add to register A and set the Z, N, O, C flags
     fn add_to_reg_a(&mut self, operand: u8) {
         let prev_carry: u16 = if self.status.contains(CpuFlags::CARRY) {
@@ -208,8 +233,7 @@ impl CPU {
             self.status.remove(CpuFlags::OVERFLOW);
         }
 
-        self.register_a = sum;
-        self.update_zero_and_neg_flags(self.register_a);
+        self.set_reg_a(sum);
     }
 
     /// Run the given program
@@ -227,20 +251,51 @@ impl CPU {
             let mode = &opcode.mode;
 
             match code {
-                // ADC - Add with carry
+                // ADC - Add with carry to reg A
                 0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.add_to_reg_a(value);
+                }
+
+                // AND - Logical AND with reg A
+                0x29 | 0x25 | 0x35 | 0x2D | 0x3D | 0x39 | 0x21 | 0x31 => {
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.set_reg_a(value & self.register_a);
+                }
+
+                // ASL - Arithmetic Shift Left to reg A
+                0x0A => {
+                    // Carry is the highest bit of reg A
+                    if self.register_a >> 7 == 1 {
+                        self.status.insert(CpuFlags::CARRY);
+                    } else {
+                        self.status.remove(CpuFlags::CARRY);
+                    }
+
+                    self.set_reg_a(self.register_a << 1);
+                }
+
+                // ASL - Arithmetic Shift Left to memory
+                0x06 | 0x16 | 0x0E | 0x1E => {
                     let addr = self.get_operand_address(mode);
                     let value = self.mem_read(addr);
-                    self.add_to_reg_a(value);
+
+                    // Carry (this is different from Rust's overflowing_shl)
+                    if value >> 7 == 1 {
+                        self.status.insert(CpuFlags::CARRY);
+                    } else {
+                        self.status.remove(CpuFlags::CARRY);
+                    }
+
+                    let result = value << 1;
+                    self.mem_write(addr, result);
+                    self.update_zero_and_neg_flags(result);
                 }
 
                 // LDA - Load to A
                 0xa9 | 0xa5 | 0xb5 | 0xad | 0xbd | 0xb9 | 0xa1 | 0xb1 => {
-                    let addr = self.get_operand_address(mode);
-                    let value = self.mem_read(addr);
-
-                    self.register_a = value;
-                    self.update_zero_and_neg_flags(self.register_a);
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.set_reg_a(value);
                 }
 
                 // STA - Store from A to memory
@@ -251,15 +306,13 @@ impl CPU {
 
                 // TAX - Take A to X
                 0xAA => {
-                    self.register_x = self.register_a;
-                    self.update_zero_and_neg_flags(self.register_x);
+                    self.set_reg_x(self.register_a);
                 }
 
                 // INX - Increment X
                 0xe8 => {
                     // Increment and allow overflow (but don't set overflow flag)
-                    self.register_x = self.register_x.wrapping_add(1);
-                    self.update_zero_and_neg_flags(self.register_x);
+                    self.set_reg_x(self.register_x.wrapping_add(1));
                 }
 
                 // BRK - Break program
