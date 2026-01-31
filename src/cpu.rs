@@ -1,10 +1,36 @@
 use crate::opcode::OPCODES_TABLE;
+use bitflags::bitflags;
+
+bitflags! {
+    /// # Status Register (P) http://wiki.nesdev.com/w/index.php/Status_flags
+    ///
+    ///  7 6 5 4 3 2 1 0
+    ///  N V _ B D I Z C
+    ///  | |   | | | | +--- Carry Flag
+    ///  | |   | | | +----- Zero Flag
+    ///  | |   | | +------- Interrupt Disable
+    ///  | |   | +--------- Decimal Mode (not used on NES)
+    ///  | |   +----------- Break Command
+    ///  | +--------------- Overflow Flag
+    ///  +----------------- Negative Flag
+    ///
+    pub struct CpuFlags: u8 {
+        const CARRY             = 0b00000001;
+        const ZERO              = 0b00000010;
+        const INTERRUPT_DISABLE = 0b00000100; // On to allow interupt
+        const DECIMAL_MODE      = 0b00001000;
+        const BREAK             = 0b00010000;
+        const BREAK2            = 0b00100000; // On bc unused
+        const OVERFLOW          = 0b01000000;
+        const NEGATIVE          = 0b10000000;
+    }
+}
 
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
     pub register_y: u8,
-    pub status: u8,
+    pub status: CpuFlags,
     pub pc: u16,
     mem: [u8; 0xFFFF], // 64 KiB of RAM
 }
@@ -63,7 +89,7 @@ impl CPU {
             register_a: 0,
             register_x: 0,
             register_y: 0,
-            status: 0,
+            status: CpuFlags::from_bits_truncate(0b0010_0100),
             pc: 0,
             mem: [0; 0xFFFF],
         }
@@ -128,7 +154,7 @@ impl CPU {
         self.register_a = 0;
         self.register_x = 0;
         self.register_y = 0;
-        self.status = 0;
+        self.status = CpuFlags::from_bits_truncate(0b0010_0100);
 
         self.pc = self.mem_read_u16(0xFFFC);
     }
@@ -144,17 +170,46 @@ impl CPU {
     fn update_zero_and_neg_flags(&mut self, result: u8) {
         // Zero flag
         if result == 0 {
-            self.status |= 0b0000_0010;
+            self.status.insert(CpuFlags::ZERO);
         } else {
-            self.status &= 0b1111_1101;
+            self.status.remove(CpuFlags::ZERO);
         }
 
         // Negative flag
         if result & 0b1000_0000 != 0 {
-            self.status |= 0b1000_0000;
+            self.status.insert(CpuFlags::NEGATIVE);
         } else {
-            self.status &= 0b0111_1111;
+            self.status.remove(CpuFlags::NEGATIVE);
         }
+    }
+
+    /// Add to register A and set the Z, N, O, C flags
+    fn add_to_reg_a(&mut self, operand: u8) {
+        let prev_carry: u16 = if self.status.contains(CpuFlags::CARRY) {
+            1
+        } else {
+            0
+        };
+
+        // Carry is when unsigned addition results in > 255 (0xFF)
+        let u16_sum: u16 = self.register_a as u16 + operand as u16 + prev_carry;
+        if u16_sum > 0xFF {
+            self.status.insert(CpuFlags::CARRY);
+        } else {
+            self.status.remove(CpuFlags::CARRY);
+        }
+
+        // Overflow: use formular from
+        // https://www.righto.com/2012/12/the-6502-overflow-flag-explained.html
+        let sum = u16_sum as u8; // "as" will truncate the value
+        if (self.register_a ^ sum) & (operand ^ sum) ^ 0x80 != 0 {
+            self.status.insert(CpuFlags::OVERFLOW);
+        } else {
+            self.status.remove(CpuFlags::OVERFLOW);
+        }
+
+        self.register_a = sum;
+        self.update_zero_and_neg_flags(self.register_a);
     }
 
     /// Run the given program
@@ -172,6 +227,13 @@ impl CPU {
             let mode = &opcode.mode;
 
             match code {
+                // ADC - Add with carry
+                0x69 | 0x65 | 0x75 | 0x6D | 0x7D | 0x79 | 0x61 | 0x71 => {
+                    let addr = self.get_operand_address(mode);
+                    let value = self.mem_read(addr);
+                    self.add_to_reg_a(value);
+                }
+
                 // LDA - Load to A
                 0xa9 | 0xa5 | 0xb5 | 0xad | 0xbd | 0xb9 | 0xa1 | 0xb1 => {
                     let addr = self.get_operand_address(mode);
@@ -232,15 +294,15 @@ mod test {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x05, 0x00]);
         assert_eq!(cpu.register_a, 0x05);
-        assert!(cpu.status & 0b0000_0010 == 0b00);
-        assert!(cpu.status & 0b1000_0000 == 0);
+        assert!(cpu.status.bits() & 0b0000_0010 == 0b00);
+        assert!(cpu.status.bits() & 0b1000_0000 == 0);
     }
 
     #[test]
     fn test_0xa9_lda_zero_flag() {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x00, 0x00]);
-        assert!(cpu.status & 0b0000_0010 == 0b10);
+        assert!(cpu.status.bits() & 0b0000_0010 == 0b10);
     }
 
     #[test]
