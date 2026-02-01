@@ -236,6 +236,25 @@ impl CPU {
         self.set_reg_a(sum);
     }
 
+    /// Add the offset from the next byte to pc if condition is true
+    fn branch_if(&mut self, condition: bool) {
+        if condition {
+            let offset = self.mem_read(self.pc) as u16;
+            self.pc = self.pc.wrapping_add(1).wrapping_add(offset);
+        }
+    }
+
+    /// Compare a value in memory with a register value
+    fn compare(&mut self, reg: u8, mode: &AddressingMode) {
+        let value = self.get_byte_by_addr_mode(mode);
+        self.update_zero_and_neg_flags(reg.wrapping_sub(value));
+        if reg >= value {
+            self.status.insert(CpuFlags::CARRY);
+        } else {
+            self.status.remove(CpuFlags::CARRY);
+        }
+    }
+
     /// Run the given program
     pub fn run(&mut self) {
         let opcode_table = &(*OPCODES_TABLE);
@@ -292,6 +311,74 @@ impl CPU {
                     self.update_zero_and_neg_flags(result);
                 }
 
+                // BCC - Branch if carry clear
+                0x90 => self.branch_if(!self.status.contains(CpuFlags::CARRY)),
+
+                // BCS - Branch if carry set
+                0xB0 => self.branch_if(self.status.contains(CpuFlags::CARRY)),
+
+                // BEQ - Branch if equal (zero)
+                0xF0 => self.branch_if(self.status.contains(CpuFlags::ZERO)),
+
+                // BIT - Bit test
+                0x24 | 0x2C => {
+                    let arg = self.get_byte_by_addr_mode(mode);
+                    let result = arg & self.register_a;
+                    self.update_zero_and_neg_flags(result);
+                    if result & 0b0100_0000 != 0 {
+                        self.status.insert(CpuFlags::OVERFLOW);
+                    } else {
+                        self.status.remove(CpuFlags::OVERFLOW);
+                    }
+                }
+
+                // BMI - Branch if minus
+                0x30 => self.branch_if(self.status.contains(CpuFlags::NEGATIVE)),
+
+                // BNE - Branch if not equal
+                0xD0 => self.branch_if(!self.status.contains(CpuFlags::ZERO)),
+
+                // BPL - Branch if positive
+                0x10 => self.branch_if(!self.status.contains(CpuFlags::NEGATIVE)),
+
+                // BRK - Break program
+                0x00 => {
+                    return;
+                }
+
+                // BVC - Branch if overflow clear
+                0x50 => self.branch_if(!self.status.contains(CpuFlags::OVERFLOW)),
+
+                // BVS - Branch if overflow set
+                0x70 => self.branch_if(self.status.contains(CpuFlags::OVERFLOW)),
+
+                // CLC - Clear carry flag
+                0x18 => self.status.remove(CpuFlags::CARRY),
+
+                // CLD - Clear decimal mode (decimal mode not used on NES)
+                0xD8 => self.status.remove(CpuFlags::DECIMAL_MODE),
+
+                // CLI - Clear interupt disable
+                0x58 => self.status.remove(CpuFlags::INTERRUPT_DISABLE),
+
+                // CLV - Clear overflow flag
+                0xB8 => self.status.remove(CpuFlags::OVERFLOW),
+
+                // CMP - Compare with reg A
+                0xC9 | 0xC5 | 0xD5 | 0xCD | 0xDD | 0xD9 | 0xC1 | 0xD1 => {
+                    self.compare(self.register_a, mode);
+                }
+
+                // CPX - Compare with reg X
+                0xE0 | 0xE4 | 0xEC => {
+                    self.compare(self.register_x, mode);
+                }
+
+                // CPY - Compare with reg Y
+                0xC0 | 0xC4 | 0xCC => {
+                    self.compare(self.register_y, mode);
+                }
+
                 // LDA - Load to A
                 0xa9 | 0xa5 | 0xb5 | 0xad | 0xbd | 0xb9 | 0xa1 | 0xb1 => {
                     let value = self.get_byte_by_addr_mode(mode);
@@ -313,11 +400,6 @@ impl CPU {
                 0xe8 => {
                     // Increment and allow overflow (but don't set overflow flag)
                     self.set_reg_x(self.register_x.wrapping_add(1));
-                }
-
-                // BRK - Break program
-                0x00 => {
-                    return;
                 }
 
                 _ => todo!(),
