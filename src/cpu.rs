@@ -32,8 +32,14 @@ pub struct CPU {
     pub register_y: u8,
     pub status: CpuFlags,
     pub pc: u16,
+    pub sp: u8,        // Stack pointer
     mem: [u8; 0xFFFF], // 64 KiB of RAM
 }
+
+// NES 6502 CPU uses stack from 0x1FF to 0x100, but the initial sp is 0xFD
+// --> See: https://www.nesdev.org/wiki/CPU_power_up_state
+const STACK_RESET: u8 = 0xFD;
+const STACK_BASE: u16 = 0x100;
 
 #[derive(Debug)]
 pub enum AddressingMode {
@@ -91,8 +97,49 @@ impl CPU {
             register_y: 0,
             status: CpuFlags::from_bits_truncate(0b0010_0100),
             pc: 0,
+            sp: STACK_RESET,
             mem: [0; 0xFFFF],
         }
+    }
+
+    /// Reset the register state of the CPU and load the starting program address
+    fn reset(&mut self) {
+        self.register_a = 0;
+        self.register_x = 0;
+        self.register_y = 0;
+        self.status = CpuFlags::from_bits_truncate(0b0010_0100);
+        self.sp = STACK_RESET;
+
+        self.pc = self.mem_read_u16(0xFFFC);
+    }
+
+    /// Push 1 byte to the stack
+    fn stack_push(&mut self, byte: u8) {
+        // Note: sp will always point to the next slot to be used
+        self.mem_write(STACK_BASE + self.sp as u16, byte);
+        self.sp = self.sp.wrapping_sub(1); // Stack grows down
+    }
+
+    // Pop 1 byte from the stack
+    fn stack_pop(&mut self) -> u8 {
+        // The value to read is the one right above sp
+        self.sp = self.sp.wrapping_add(1);
+        self.mem_read(STACK_BASE + self.sp as u16)
+    }
+
+    /// Push 2 bytes to the stack
+    fn stack_push_u16(&mut self, data: u16) {
+        let hi = (data >> 8) as u8;
+        let lo = (data & 0xff) as u8;
+        self.stack_push(hi);
+        self.stack_push(lo);
+    }
+
+    // Pop 2 bytes from the stack
+    fn stack_pop_u16(&mut self) -> u16 {
+        let lo = self.stack_pop() as u16;
+        let hi = self.stack_pop() as u16;
+        hi << 8 | lo
     }
 
     /// Get the address of the operand, depending on the addressing mode
@@ -147,16 +194,6 @@ impl CPU {
                 panic!("Mode {mode:?} is not supported.")
             }
         }
-    }
-
-    /// Reset the register state of the CPU and load the starting program address
-    fn reset(&mut self) {
-        self.register_a = 0;
-        self.register_x = 0;
-        self.register_y = 0;
-        self.status = CpuFlags::from_bits_truncate(0b0010_0100);
-
-        self.pc = self.mem_read_u16(0xFFFC);
     }
 
     /// Load a program to the memory
@@ -379,10 +416,114 @@ impl CPU {
                     self.compare(self.register_y, mode);
                 }
 
-                // LDA - Load to A
-                0xa9 | 0xa5 | 0xb5 | 0xad | 0xbd | 0xb9 | 0xa1 | 0xb1 => {
+                // DEC - Decrement memory
+                0xC6 | 0xD6 | 0xCE | 0xDE => {
+                    let addr = self.get_operand_address(mode);
+                    let value = self.mem_read(addr);
+                    let result = value.wrapping_sub(1);
+                    self.mem_write(addr, result);
+                    self.update_zero_and_neg_flags(result);
+                }
+
+                // DEX - Decrement reg X
+                0xCA => self.set_reg_x(self.register_x.wrapping_sub(1)),
+
+                // DEY - Decrement reg Y
+                0x88 => self.set_reg_y(self.register_y.wrapping_sub(1)),
+
+                // EOR - XOR reg A and memory
+                0x49 | 0x45 | 0x55 | 0x4D | 0x5D | 0x59 | 0x41 | 0x51 => {
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.set_reg_a(self.register_a ^ value);
+                }
+
+                // INC - Increment memory
+                0xE6 | 0xF6 | 0xEE | 0xFE => {
+                    let addr = self.get_operand_address(mode);
+                    let value = self.mem_read(addr);
+                    let result = value.wrapping_add(1);
+                    self.mem_write(addr, result);
+                    self.update_zero_and_neg_flags(result);
+                }
+
+                // INX - Increment reg X
+                0xE8 => self.set_reg_x(self.register_x.wrapping_add(1)),
+
+                // INY - Increment reg Y
+                0xC8 => self.set_reg_y(self.register_y.wrapping_add(1)),
+
+                // JMP - Jump to address
+                0x4C | 0x6C => {
+                    let addr = self.get_2_bytes_by_addr_mode(mode);
+                    self.pc = addr;
+                    // Note: Indirect jump might have problem
+                    // --> See: https://www.nesdev.org/obelisk-6502-guide/reference.html#JMP
+                }
+
+                // JSR - Jump to subroutine
+                0x20 => {
+                    // Note: pc is already incremented and points to the address to jump to
+                    // after the opcode is read.
+                    let next_pc = self.pc + 2;
+                    self.stack_push_u16(next_pc - 1);
+                    self.pc = self.mem_read_u16(self.pc);
+                }
+
+                // LDA - Load to reg A
+                0xA9 | 0xA5 | 0xB5 | 0xAD | 0xBD | 0xB9 | 0xA1 | 0xB1 => {
                     let value = self.get_byte_by_addr_mode(mode);
                     self.set_reg_a(value);
+                }
+
+                // LDX - Load to reg X
+                0xA2 | 0xA6 | 0xB6 | 0xAE | 0xBE => {
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.set_reg_x(value);
+                }
+
+                // LDY - Load to reg Y
+                0xA0 | 0xA4 | 0xB4 | 0xAC | 0xBC => {
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.set_reg_y(value);
+                }
+
+                // LSR - Logical right shift to reg A
+                0x4A => {
+                    // Bit 0 (to be shifted away) is put in CARRY
+                    if self.register_a & 0b0000_0001 != 0 {
+                        self.status.insert(CpuFlags::CARRY);
+                    }
+                    else {
+                        self.status.remove(CpuFlags::CARRY);
+                    }
+
+                    // Logical shift fills left space with 0
+                    self.set_reg_a(self.register_a >> 1);
+                }
+
+                // LSR - Logical right shift to memory
+                0x46 | 0x56 | 0x4E | 0x5E => {
+                    let addr = self.get_operand_address(mode);
+                    let value = self.mem_read(addr);
+                    if value & 0b0000_0001 != 0 {
+                        self.status.insert(CpuFlags::CARRY);
+                    }
+                    else {
+                        self.status.remove(CpuFlags::CARRY);
+                    }
+
+                    let result = value >> 1;
+                    self.mem_write(addr, result);
+                    self.update_zero_and_neg_flags(result);
+                }
+
+                // NOP - No op
+                0xEA => {}
+
+                // ORA - Logical OR
+                0x09 | 0x05 | 0x15 | 0x0D | 0x1D | 0x19 | 0x01 | 0x11 => {
+                    let value = self.get_byte_by_addr_mode(mode);
+                    self.set_reg_a(self.register_a | value);
                 }
 
                 // STA - Store from A to memory
@@ -394,12 +535,6 @@ impl CPU {
                 // TAX - Take A to X
                 0xAA => {
                     self.set_reg_x(self.register_a);
-                }
-
-                // INX - Increment X
-                0xe8 => {
-                    // Increment and allow overflow (but don't set overflow flag)
-                    self.set_reg_x(self.register_x.wrapping_add(1));
                 }
 
                 _ => todo!(),
