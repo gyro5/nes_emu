@@ -14,6 +14,7 @@ bitflags! {
     ///  | +--------------- Overflow Flag
     ///  +----------------- Negative Flag
     ///
+    #[derive(Clone)]
     pub struct CpuFlags: u8 {
         const CARRY             = 0b00000001;
         const ZERO              = 0b00000010;
@@ -492,8 +493,7 @@ impl CPU {
                     // Bit 0 (to be shifted away) is put in CARRY
                     if self.register_a & 0b0000_0001 != 0 {
                         self.status.insert(CpuFlags::CARRY);
-                    }
-                    else {
+                    } else {
                         self.status.remove(CpuFlags::CARRY);
                     }
 
@@ -507,8 +507,7 @@ impl CPU {
                     let value = self.mem_read(addr);
                     if value & 0b0000_0001 != 0 {
                         self.status.insert(CpuFlags::CARRY);
-                    }
-                    else {
+                    } else {
                         self.status.remove(CpuFlags::CARRY);
                     }
 
@@ -526,16 +525,140 @@ impl CPU {
                     self.set_reg_a(self.register_a | value);
                 }
 
+                // PHA - Push reg A to stack
+                0x48 => {
+                    self.stack_push(self.register_a);
+                }
+
+                // PHP - Push status byte to stack
+                0x08 => {
+                    let mut flags = self.status.clone();
+
+                    // 2 break flags always pushed as on.
+                    // --> See: https://www.nesdev.org/wiki/Status_flags
+                    flags.insert(CpuFlags::BREAK);
+                    flags.insert(CpuFlags::BREAK2);
+
+                    self.stack_push(flags.bits());
+                }
+
+                // PLA - Pop stack to reg A
+                0x68 => {
+                    let value = self.stack_pop();
+                    self.set_reg_a(value);
+                }
+
+                // PLP - Pop stack to status
+                0x28 => {
+                    let value = self.stack_pop();
+                    self.status = CpuFlags::from_bits_retain(value);
+                    self.status.remove(CpuFlags::BREAK);
+                    self.status.remove(CpuFlags::BREAK2);
+                }
+
+                // ROL - Rotate left reg A
+                0x2A => {
+                    let carry_bit = if self.status.contains(CpuFlags::CARRY) {
+                        1
+                    } else {
+                        0
+                    };
+                    if self.register_a >> 7 == 1 {
+                        self.status.insert(CpuFlags::CARRY);
+                    } else {
+                        self.status.remove(CpuFlags::CARRY);
+                    }
+                    self.set_reg_a((self.register_a << 1) | carry_bit);
+                }
+
+                // ROL - Rotate left memory
+                0x26 | 0x36 | 0x2E | 0x3E => {
+                    let addr = self.get_operand_address(mode);
+                    let value = self.mem_read(addr);
+
+                    let carry_bit = if self.status.contains(CpuFlags::CARRY) {
+                        1
+                    } else {
+                        0
+                    };
+                    if value >> 7 == 1 {
+                        self.status.insert(CpuFlags::CARRY);
+                    } else {
+                        self.status.remove(CpuFlags::CARRY);
+                    }
+
+                    let result = (value << 1) | carry_bit;
+                    self.mem_write(addr, result);
+                    self.update_zero_and_neg_flags(result);
+                }
+
+                // RTI - Return from interrupt
+                0x40 => {
+                    // From https://github.com/bugzmanov/nes_ebook/blob/master/code/ch3.3/src/cpu.rs#L709C21-L711C58
+                    self.status = CpuFlags::from_bits_retain(self.stack_pop());
+                    self.status.remove(CpuFlags::BREAK);
+                    self.status.insert(CpuFlags::BREAK2);
+                    self.pc = self.stack_pop_u16();
+                }
+
+                // RTS - Return from subroutine
+                0x60 => {
+                    // Because the return address pushed to stack is 1 before
+                    // the address of the next instruction.
+                    self.pc = self.stack_pop_u16() + 1;
+                }
+
+                // SBC - Subtract with carry
+                0xE9 | 0xE5 | 0xF5 | 0xED | 0xFD | 0xF9 | 0xE1 | 0xF1 => {
+                    // Subtract is plus the two complements of the operand
+                    let value = self.get_byte_by_addr_mode(mode) as i8;
+                    self.add_to_reg_a(value.wrapping_neg().wrapping_sub(1) as u8);
+                }
+
+                // SEC- Set carry
+                0x38 => self.status.insert(CpuFlags::CARRY),
+
+                // SED - Set decimal flag
+                0xF8 => self.status.insert(CpuFlags::DECIMAL_MODE),
+
+                // SEI - Set interupt disable
+                0x78 => self.status.insert(CpuFlags::INTERRUPT_DISABLE),
+
                 // STA - Store from A to memory
                 0x85 | 0x95 | 0x8d | 0x9d | 0x99 | 0x81 | 0x91 => {
                     let addr = self.get_operand_address(mode);
                     self.mem_write(addr, self.register_a);
                 }
 
-                // TAX - Take A to X
-                0xAA => {
-                    self.set_reg_x(self.register_a);
+                // STX - Store from X to memory
+                0x86 | 0x96 | 0x8E => {
+                    let addr = self.get_operand_address(mode);
+                    self.mem_write(addr, self.register_x);
                 }
+
+                // STY - Store from Y to memory
+                0x84 | 0x94 | 0x8C => {
+                    let addr = self.get_operand_address(mode);
+                    self.mem_write(addr, self.register_y);
+                }
+
+                // TAX - Transfer A to X
+                0xAA => self.set_reg_x(self.register_a),
+
+                // TAY - Transfer A to Y
+                0xA8 => self.set_reg_y(self.register_a),
+
+                // TSX - Transfer sp to X
+                0xBA => self.set_reg_x(self.sp),
+
+                // TXA - Transfer X to A
+                0x8A => self.set_reg_a(self.register_x),
+
+                // TXS - Transfer X to sp
+                0x9A => self.sp = self.register_x,
+
+                // TYA - Transfer Y to A
+                0x98 => self.set_reg_a(self.register_y),
 
                 _ => todo!(),
             }
