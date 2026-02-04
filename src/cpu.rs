@@ -56,7 +56,7 @@ pub enum AddressingMode {
     NoneAddressing, // No address
 }
 
-trait Mem {
+pub trait Mem {
     fn mem_read(&self, addr: u16) -> u8;
 
     fn mem_write(&mut self, addr: u16, data: u8);
@@ -104,7 +104,7 @@ impl CPU {
     }
 
     /// Reset the register state of the CPU and load the starting program address
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.register_a = 0;
         self.register_x = 0;
         self.register_y = 0;
@@ -197,13 +197,6 @@ impl CPU {
         }
     }
 
-    /// Load a program to the memory
-    pub fn load(&mut self, program: Vec<u8>) {
-        // Load the program to the address 0x8000
-        self.mem[0x8000..(0x8000 + program.len())].copy_from_slice(&program);
-        self.mem_write_u16(0xFFFC, 0x8000); // NES uses 0xFFFC to store program's start addr
-    }
-
     /// Set the zero flag and negative flag according to the result
     fn update_zero_and_neg_flags(&mut self, result: u8) {
         // Zero flag
@@ -241,11 +234,6 @@ impl CPU {
         self.mem_read(addr)
     }
 
-    fn get_2_bytes_by_addr_mode(&mut self, mode: &AddressingMode) -> u16 {
-        let addr = self.get_operand_address(mode);
-        self.mem_read_u16(addr)
-    }
-
     /// Add to register A and set the Z, N, O, C flags
     fn add_to_reg_a(&mut self, operand: u8) {
         let prev_carry: u16 = if self.status.contains(CpuFlags::CARRY) {
@@ -277,8 +265,11 @@ impl CPU {
     /// Add the offset from the next byte to pc if condition is true
     fn branch_if(&mut self, condition: bool) {
         if condition {
-            let offset = self.mem_read(self.pc) as u16;
-            self.pc = self.pc.wrapping_add(1).wrapping_add(offset);
+            // Need "as i8" to get the negative jump offset, then when cast to u16,
+            // the leftmost bit (which is 1) will be extended.
+            // If go from u8 straight to u16, the leftmost bits will be 0 (0-extend).
+            let offset = self.mem_read(self.pc) as i8;
+            self.pc = self.pc.wrapping_add(1).wrapping_add(offset as u16);
         }
     }
 
@@ -293,11 +284,31 @@ impl CPU {
         }
     }
 
-    /// Run the given program
+    /// Load a program to the memory
+    pub fn load(&mut self, program: Vec<u8>) {
+        // Load the program to a hardcoded address for now
+        self.mem[0x0600..(0x0600 + program.len())].copy_from_slice(&program);
+        // NES uses 0xFFFC to store program's start address
+        self.mem_write_u16(0xFFFC, 0x0600);
+    }
+
+    /// Run with no callback
     pub fn run(&mut self) {
+        self.run_with_callback(|_| {});
+    }
+
+    /// Run the given program with the callback being called before each instruction
+    pub fn run_with_callback<F>(&mut self, mut callback: F)
+    where
+        F: FnMut(&mut CPU),
+    {
         let opcode_table = &(*OPCODES_TABLE);
 
         loop {
+            // Run the callback first
+            callback(self);
+
+            // Get the next opcode
             let code = self.mem_read(self.pc);
             self.pc += 1;
             let save_pc = self.pc;
@@ -381,6 +392,7 @@ impl CPU {
 
                 // BRK - Break program
                 0x00 => {
+                    println!("Done running!");
                     return;
                 }
 
@@ -455,11 +467,31 @@ impl CPU {
 
                 // JMP - Jump to address
                 0x4C | 0x6C => {
-                    let addr = self.get_2_bytes_by_addr_mode(mode);
+                    let addr = self.mem_read_u16(self.pc);
                     self.pc = addr;
                     // Note: Indirect jump might have problem
                     // --> See: https://www.nesdev.org/obelisk-6502-guide/reference.html#JMP
                 }
+
+                // JMP - Jump with 6502 bug - NOT NEEDED FOR NOW
+                // 0x6C => {
+                //     let mem_address = self.mem_read_u16(self.pc);
+                //     // let indirect_ref = self.mem_read_u16(mem_address);
+                //     //6502 bug mode with with page boundary:
+                //     //  if address $3000 contains $40, $30FF contains $80, and $3100 contains $50,
+                //     // the result of JMP ($30FF) will be a transfer of control to $4080 rather than $5080 as you intended
+                //     // i.e. the 6502 took the low byte of the address from $30FF and the high byte from $3000
+
+                //     let indirect_ref = if mem_address & 0x00FF == 0x00FF {
+                //         let lo = self.mem_read(mem_address);
+                //         let hi = self.mem_read(mem_address & 0xFF00);
+                //         (hi as u16) << 8 | (lo as u16)
+                //     } else {
+                //         self.mem_read_u16(mem_address)
+                //     };
+
+                //     self.pc = indirect_ref;
+                // }
 
                 // JSR - Jump to subroutine
                 0x20 => {
