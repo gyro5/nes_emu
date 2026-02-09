@@ -1,3 +1,4 @@
+use crate::bus::Bus;
 use crate::mem::{AddressingMode, Mem};
 use crate::opcode::OPCODES_TABLE;
 use bitflags::bitflags;
@@ -33,25 +34,24 @@ pub struct CPU {
     pub register_x: u8,
     pub register_y: u8,
     pub status: CpuFlags,
-    pub pc: u16,
-    pub sp: u8,        // Stack pointer
-    mem: [u8; 0xFFFF], // 64 KiB of RAM
+    pub pc: u16, // Program counter
+    pub sp: u8,  // Stack pointer
+    bus: Bus,
 }
 
 // NES 6502 CPU uses stack from 0x1FF to 0x100, but the initial sp is 0xFD
+// (Note: stack grows from high to low memory).
 // --> See: https://www.nesdev.org/wiki/CPU_power_up_state
 const STACK_RESET: u8 = 0xFD;
 const STACK_BASE: u16 = 0x100;
 
 impl Mem for CPU {
-    /// Return a byte at addr from the memory
     fn mem_read(&self, addr: u16) -> u8 {
-        self.mem[addr as usize]
+        self.bus.mem_read(addr)
     }
 
-    /// Write a byte to the address addr in the memory
     fn mem_write(&mut self, addr: u16, data: u8) {
-        self.mem[addr as usize] = data;
+        self.bus.mem_write(addr, data);
     }
 }
 
@@ -64,7 +64,7 @@ impl CPU {
             status: CpuFlags::from_bits_truncate(0b0010_0100),
             pc: 0,
             sp: STACK_RESET,
-            mem: [0; 0xFFFF],
+            bus: Bus::new(),
         }
     }
 
@@ -252,9 +252,13 @@ impl CPU {
     /// Load a program to the memory
     pub fn load(&mut self, program: Vec<u8>) {
         // Load the program to a hardcoded address for now
-        self.mem[0x0600..(0x0600 + program.len())].copy_from_slice(&program);
+        // self.mem[0x0600..(0x0600 + program.len())].copy_from_slice(&program);
+        for i in 0..(program.len() as u16) {
+            self.mem_write(0x0000 + i, program[i as usize]);
+        }
+
         // NES uses 0xFFFC to store program's start address
-        self.mem_write_u16(0xFFFC, 0x0600);
+        self.mem_write_u16(0xFFFC, 0x0000);
     }
 
     /// Run with no callback

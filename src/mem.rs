@@ -13,8 +13,10 @@ pub enum AddressingMode {
 }
 
 pub trait Mem {
+    /// Return a byte at addr from the memory
     fn mem_read(&self, addr: u16) -> u8;
 
+    /// Write a byte to the address addr in the memory
     fn mem_write(&mut self, addr: u16, data: u8);
 
     /// Read 2 bytes from the memory
