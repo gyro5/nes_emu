@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::LazyLock};
 
-use crate::cpu::AddressingMode;
+use crate::mem::AddressingMode;
 
 pub struct OpCode {
     pub code: u8,

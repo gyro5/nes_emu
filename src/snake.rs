@@ -4,10 +4,11 @@ use sdl3::{
     event::Event,
     keyboard::Keycode,
     pixels::{Color, PixelFormat},
-    render
+    render,
 };
 
-use crate::cpu::{CPU, Mem};
+use crate::cpu::CPU;
+use crate::mem::Mem;
 
 /*
 Memory mapping for the game:
@@ -38,7 +39,9 @@ pub fn run() {
     canvas.set_scale(20.0, 20.0).unwrap();
 
     let creator = canvas.texture_creator();
-    let mut texture = creator.create_texture_target(PixelFormat::RGB24, 32, 32).unwrap();
+    let mut texture = creator
+        .create_texture_target(PixelFormat::RGB24, 32, 32)
+        .unwrap();
 
     // To fix the texture being blurry
     texture.set_scale_mode(render::ScaleMode::Nearest);
