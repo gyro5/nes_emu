@@ -22,7 +22,7 @@ pub trait Mem {
         // Address is in little-endian
         let lo = self.mem_read(addr) as u16;
         let hi = self.mem_read(addr + 1) as u16;
-        (hi << 8) | (lo as u16)
+        (hi << 8) | lo
     }
 
     /// Write 2 bytes to the memory
