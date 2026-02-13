@@ -47,7 +47,7 @@ pub fn run() {
     texture.set_scale_mode(render::ScaleMode::Nearest);
 
     // This is used as a buffer for the texture
-    let mut screen_state = [0 as u8; 32 * 3 * 32];
+    let mut screen_state = [0; 32 * 3 * 32];
 
     let mut rng = rand::rng();
 

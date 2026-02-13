@@ -55,8 +55,8 @@ impl Mem for CPU {
     }
 }
 
-impl CPU {
-    pub fn new() -> Self {
+impl Default for CPU {
+    fn default() -> Self {
         CPU {
             register_a: 0,
             register_x: 0,
@@ -66,6 +66,12 @@ impl CPU {
             sp: STACK_RESET,
             bus: Bus::new(),
         }
+    }
+}
+
+impl CPU {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Reset the register state of the CPU and load the starting program address
@@ -284,7 +290,7 @@ impl CPU {
 
             let opcode = opcode_table
                 .get(&code)
-                .expect(&format!("Opcode {code:x} not recognized."));
+                .unwrap_or_else(|| panic!("Opcode {code:x} not recognized."));
             let mode = &opcode.mode;
 
             match code {
