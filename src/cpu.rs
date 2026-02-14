@@ -1,4 +1,4 @@
-use crate::bus::Bus;
+use crate::bus::{Bus, PRG_START};
 use crate::mem::{AddressingMode, Mem};
 use crate::opcode::OPCODES_TABLE;
 use bitflags::bitflags;
@@ -55,23 +55,17 @@ impl Mem for CPU {
     }
 }
 
-impl Default for CPU {
-    fn default() -> Self {
+impl CPU {
+    pub fn new(bus: Bus) -> Self {
         CPU {
             register_a: 0,
             register_x: 0,
             register_y: 0,
             status: CpuFlags::from_bits_truncate(0b0010_0100),
-            pc: 0,
+            pc: PRG_START,
             sp: STACK_RESET,
-            bus: Bus::new(),
+            bus,
         }
-    }
-}
-
-impl CPU {
-    pub fn new() -> Self {
-        Self::default()
     }
 
     /// Reset the register state of the CPU and load the starting program address
@@ -255,17 +249,17 @@ impl CPU {
         }
     }
 
-    /// Load a program to the memory
-    pub fn load(&mut self, program: Vec<u8>) {
-        // Load the program to a hardcoded address for now
-        // self.mem[0x0600..(0x0600 + program.len())].copy_from_slice(&program);
-        for i in 0..(program.len() as u16) {
-            self.mem_write(0x0000 + i, program[i as usize]);
-        }
+    // / Load a program to the memory
+    // pub fn load(&mut self, program: Vec<u8>) {
+    //     // Load the program to a hardcoded address for now
+    //     // self.mem[0x0600..(0x0600 + program.len())].copy_from_slice(&program);
+    //     for i in 0..(program.len() as u16) {
+    //         self.mem_write(0x0000 + i, program[i as usize]);
+    //     }
 
-        // NES uses 0xFFFC to store program's start address
-        self.mem_write_u16(0xFFFC, 0x0000);
-    }
+    //     // NES uses 0xFFFC to store program's start address
+    //     self.mem_write_u16(0xFFFC, 0x0000);
+    // }
 
     /// Run with no callback
     pub fn run(&mut self) {
@@ -292,6 +286,8 @@ impl CPU {
                 .get(&code)
                 .unwrap_or_else(|| panic!("Opcode {code:x} not recognized."));
             let mode = &opcode.mode;
+
+            // println!("{:?}", opcode.name);
 
             match code {
                 // ADC - Add with carry to reg A
@@ -677,22 +673,24 @@ impl CPU {
         }
     }
 
-    /// Load a program to memory and run it
-    pub fn load_and_run(&mut self, program: Vec<u8>) {
-        self.load(program);
-        self.reset();
-        self.run();
-    }
+    // /// Load a program to memory and run it
+    // pub fn load_and_run(&mut self, program: Vec<u8>) {
+    //     self.load(program);
+    //     self.reset();
+    //     self.run();
+    // }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::rom;
+
     use super::*;
 
     #[test]
     fn test_0xa9_lda_immediate_load_data() {
-        let mut cpu = CPU::new();
-        cpu.load_and_run(vec![0xa9, 0x05, 0x00]);
+        let mut cpu = CPU::new(Bus::new(rom::test::create_test_rom(vec![0xa9, 0x05, 0x00])));
+        cpu.run();
         assert_eq!(cpu.register_a, 0x05);
         assert!(cpu.status.bits() & 0b0000_0010 == 0b00);
         assert!(cpu.status.bits() & 0b1000_0000 == 0);
@@ -700,25 +698,23 @@ mod test {
 
     #[test]
     fn test_0xa9_lda_zero_flag() {
-        let mut cpu = CPU::new();
-        cpu.load_and_run(vec![0xa9, 0x00, 0x00]);
+        let mut cpu = CPU::new(Bus::new(rom::test::create_test_rom(vec![0xa9, 0x00, 0x00])));
+        cpu.run();
         assert!(cpu.status.bits() & 0b0000_0010 == 0b10);
     }
 
     #[test]
     fn test_lda_from_memory() {
-        let mut cpu = CPU::new();
+        let mut cpu = CPU::new(Bus::new(rom::test::create_test_rom(vec![0xa5, 0x10, 0x00])));
         cpu.mem_write(0x10, 0x55);
-
-        cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
-
+        cpu.run();
         assert_eq!(cpu.register_a, 0x55);
     }
 
     #[test]
     fn test_0xaa_tax_move_a_to_x() {
-        let mut cpu = CPU::new();
-        cpu.load_and_run(vec![0xa9, 0x12, 0xaa, 0x00]);
+        let mut cpu = CPU::new(Bus::new(rom::test::create_test_rom(vec![0xa9, 0x12, 0xaa, 0x00])));
+        cpu.run();
         assert_eq!(cpu.register_x, 0x12)
     }
 
@@ -728,17 +724,15 @@ mod test {
         // TAX
         // INX
         // BRK
-        let mut cpu = CPU::new();
-        cpu.load_and_run(vec![0xa9, 0xc0, 0xaa, 0xe8, 0x00]);
-
+        let mut cpu = CPU::new(Bus::new(rom::test::create_test_rom(vec![0xa9, 0xc0, 0xaa, 0xe8, 0x00])));
+        cpu.run();
         assert_eq!(cpu.register_x, 0xc1)
     }
 
     #[test]
     fn test_inx_overflow() {
-        let mut cpu = CPU::new();
-        cpu.load_and_run(vec![0xa9, 0xff, 0xaa, 0xe8, 0xe8, 0x00]);
-
+        let mut cpu = CPU::new(Bus::new(rom::test::create_test_rom(vec![0xa9, 0xff, 0xaa, 0xe8, 0xe8, 0x00])));
+        cpu.run();
         assert_eq!(cpu.register_x, 1)
     }
 }

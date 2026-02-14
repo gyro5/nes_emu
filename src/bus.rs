@@ -1,13 +1,15 @@
-use crate::mem::Mem;
+use crate::{mem::Mem, rom::Rom};
 
 pub struct Bus {
     cpu_vram: [u8; 2048], // 2 KiB of ram
+    rom: Rom,
 }
 
 impl Bus {
-    pub fn new() -> Self {
+    pub fn new(rom: Rom) -> Self {
         Bus {
             cpu_vram: [0; 2048],
+            rom,
         }
     }
 }
@@ -30,6 +32,8 @@ const RAM_START: u16 = 0x0000;
 const RAM_MIRROR_END: u16 = 0x1FFF;
 const PPU_REGISTERS_START: u16 = 0x2000;
 const PPU_REGISTERS_MIRROR_END: u16 = 0x3FFF;
+pub const PRG_START: u16 = 0x8000;
+const PRG_END: u16 = 0xFFFF;
 
 impl Mem for Bus {
     fn mem_read(&self, addr: u16) -> u8 {
@@ -45,6 +49,8 @@ impl Mem for Bus {
                 let _mirror_down_addr = addr & 0b00100000_00000111;
                 todo!("PPU is not supported yet")
             }
+
+            PRG_START..=PRG_END => self.rom.read_prg_byte(addr - PRG_START),
 
             _ => {
                 println!("Ignoring memory access at address {addr:#x}");
@@ -65,6 +71,8 @@ impl Mem for Bus {
                 let _mirror_down_addr = addr & 0b00100000_00000111;
                 todo!("PPU is not supported yet");
             }
+
+            PRG_START..=PRG_END => panic!("Attempt to write to ROM"),
 
             _ => {
                 println!("Ignoring memory write at address {addr:#x}");

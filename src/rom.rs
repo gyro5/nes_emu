@@ -87,21 +87,21 @@ impl Rom {
             screen_mirroring,
         })
     }
+
+    pub fn read_prg_byte(&self, mut addr: u16) -> u8 {
+        // Mirroring if needed
+        if self.prg_rom.len() == 0x4000 {
+            addr %= 0x4000;
+        }
+        self.prg_rom[addr as usize]
+    }
 }
 
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
 
-    #[test]
-    fn test_file_not_ines() {
-        // Last byte is different from expected
-        let result = Rom::new(&vec![0x4E, 0x45, 0x53, 0x1B]);
-        assert!(result.is_err_and(|msg| { msg == "File is not in iNES format" }));
-    }
-
-    #[test]
-    fn test_good_ines_file() {
+    pub fn create_test_rom(mut prg: Vec<u8>) -> Rom {
         let header = vec![
             0x4E,        // |
             0x45,        // |
@@ -113,17 +113,34 @@ mod test {
             0b1111_0000, // "0000" for iNES 1.0
         ];
         let header_res = vec![0; 16 - header.len()];
-        let raw_prg = vec![0; PRG_PAGE_SIZE];
+        prg.resize(PRG_PAGE_SIZE, 0);
         let raw_chr = vec![0; CHR_PAGE_SIZE];
-        let raw = [header, header_res, raw_prg, raw_chr].concat();
+        let raw = [header, header_res, prg, raw_chr].concat();
         assert_eq!(raw.len(), 16 + PRG_PAGE_SIZE + CHR_PAGE_SIZE);
 
-        let result = Rom::new(&raw);
-        assert!(result.is_ok_and(|rom| {
+        // Can panic because this is for testing
+        Rom::new(&raw).unwrap()
+    }
+
+    pub fn dummy_rom() -> Rom {
+        create_test_rom(vec![0; PRG_PAGE_SIZE])
+    }
+
+    #[test]
+    fn test_file_not_ines() {
+        // Last byte is different from expected
+        let result = Rom::new(&[0x4E, 0x45, 0x53, 0x1B]);
+        assert!(result.is_err_and(|msg| { msg == "File is not in iNES format" }));
+    }
+
+    #[test]
+    fn test_good_ines_file() {
+        let rom = dummy_rom();
+        assert!(
             rom.prg_rom.len() == PRG_PAGE_SIZE
                 && rom.chr_rom.len() == CHR_PAGE_SIZE
                 && rom.mapper == 0b1111_0000
                 && rom.screen_mirroring == Mirroring::Vertical
-        }))
+        )
     }
 }
