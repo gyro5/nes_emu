@@ -52,7 +52,7 @@ pub fn run() {
     let mut rng = rand::rng();
 
     //load the game
-    let bytes: Vec<u8> = std::fs::read("snake.nes").unwrap();
+    let bytes: Vec<u8> = std::fs::read("nes/snake.nes").unwrap();
     let rom = Rom::new(&bytes).unwrap();
 
     //load the game
