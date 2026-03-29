@@ -108,8 +108,9 @@ impl CPU {
         hi << 8 | lo
     }
 
-    /// Get the address of the operand, depending on the addressing mode
-    fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
+    /// Get the address of the operand, depending on the addressing mode,
+    /// assuming the PC has been incremented.
+    pub fn get_operand_address(&self, mode: &AddressingMode) -> u16 {
         match mode {
             AddressingMode::Immediate => self.pc,
 
@@ -141,18 +142,13 @@ impl CPU {
                 let base = self.mem_read(self.pc);
                 let ptr_to_addr = base.wrapping_add(self.register_x);
 
-                let lo = self.mem_read(ptr_to_addr as u16) as u16;
-                let hi = self.mem_read(ptr_to_addr.wrapping_add(1) as u16) as u16;
-                hi << 8 | lo
+                self.mem_read_u16(ptr_to_addr as u16)
             }
 
             AddressingMode::IndirectY => {
                 let ptr_to_base = self.mem_read(self.pc);
 
-                let lo = self.mem_read(ptr_to_base as u16) as u16;
-                let hi = self.mem_read(ptr_to_base.wrapping_add(1) as u16) as u16;
-
-                let base = hi << 8 | lo;
+                let base = self.mem_read_u16(ptr_to_base as u16);
                 base.wrapping_add(self.register_y as u16)
             }
 
@@ -248,18 +244,6 @@ impl CPU {
             self.status.remove(CpuFlags::CARRY);
         }
     }
-
-    // / Load a program to the memory
-    // pub fn load(&mut self, program: Vec<u8>) {
-    //     // Load the program to a hardcoded address for now
-    //     // self.mem[0x0600..(0x0600 + program.len())].copy_from_slice(&program);
-    //     for i in 0..(program.len() as u16) {
-    //         self.mem_write(0x0000 + i, program[i as usize]);
-    //     }
-
-    //     // NES uses 0xFFFC to store program's start address
-    //     self.mem_write_u16(0xFFFC, 0x0000);
-    // }
 
     /// Run with no callback
     pub fn run(&mut self) {
@@ -672,13 +656,6 @@ impl CPU {
             }
         }
     }
-
-    // /// Load a program to memory and run it
-    // pub fn load_and_run(&mut self, program: Vec<u8>) {
-    //     self.load(program);
-    //     self.reset();
-    //     self.run();
-    // }
 }
 
 #[cfg(test)]

@@ -51,15 +51,14 @@ pub fn run() {
 
     let mut rng = rand::rng();
 
-    //load the game
+    // Load the game
     let bytes: Vec<u8> = std::fs::read("nes/snake.nes").unwrap();
     let rom = Rom::new(&bytes).unwrap();
 
-    //load the game
     let mut cpu = CPU::new(Bus::new(rom));
     cpu.reset();
 
-    // run the game cycle
+    // Run the game cycle
     cpu.run_with_callback(move |cpu| {
         // Handle user input. In particular, pressing WASD will write to a specific
         // byte in the CPU's memory that is used for user input.
